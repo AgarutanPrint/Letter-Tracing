@@ -25,9 +25,14 @@
   .tile-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
   .tile { position: relative; aspect-ratio: 1; min-width: 0; border: none; border-radius: 16px; background: #eef1fb; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; transition: transform .1s; overflow: hidden; }
   .tile:active { transform: scale(.95); }
-  .tile .ch { font-size: 34px; font-weight: 800; color: #2c2c40; line-height: 1; }
+  .tile .ch { display: block; line-height: 0; }
+  .dglyph { display: block; width: auto; }
   .tile .wd { font-size: 10px; color: #8a90a0; margin-top: 4px; }
   .tile .star { position: absolute; top: 3px; right: 5px; font-size: 13px; }
+  .reset-row { text-align: center; margin-top: 16px; }
+  .reset-btn { border: none; background: transparent; color: #9aa0ab; font-size: 12px; font-weight: 700; padding: 8px 14px; border-radius: 10px; cursor: pointer; }
+  .reset-btn:hover, .reset-btn:active { background: #f0f2f8; color: #6b7280; }
+
   /* ---------- top bar ---------- */
   .top-bar { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 12px; }
   .back-btn, .nav-btn, .icon-btn { background: #eceef4; border: none; border-radius: 10px; font-weight: 700; color: #33334d; cursor: pointer; }
@@ -44,7 +49,7 @@
   /* ---------- study ---------- */
   .study-header { text-align: center; margin-bottom: 10px; }
   .pair-row { display: flex; align-items: center; justify-content: center; gap: 10px; }
-  .pair { font-size: 44px; font-weight: 800; line-height: 1; }
+  .pair { line-height: 0; }
   .word-lbl { font-size: 15px; color: #7a8090; margin-top: 2px; font-weight: 700; }
   .speak-btn { background: #eef1fb; border: none; border-radius: 50%; width: 38px; height: 38px; font-size: 17px; cursor: pointer; }
   .speak-btn:active { transform: scale(.9); }
@@ -199,6 +204,27 @@ function glyphFor(cs, i){
   var ch = cs === 'up' ? LETTERS[i] : LETTERS[i].toLowerCase();
   var g = GLYPHS[cs][ch];
   return { ch: ch, strokes: g.s, x0: g.x0, x1: g.x1, cx: (g.x0+g.x1)/2 };
+}
+
+// big display letters use the workbook's own shapes (device fonts draw a two-storey a, g ...)
+function inkPaths(parent, g, dx){
+  var gg = S('g', {transform: 'translate(' + dx + ',0)'}, parent);
+  g.s.forEach(function(d){ S('path', {d: d, fill: 'none', stroke: '#2c2c40', 'stroke-width': 17, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}, gg); });
+}
+function letterSVG(cs, L, h){
+  var ch = cs === 'up' ? L : L.toLowerCase(), g = GLYPHS[cs][ch];
+  var svg = S('svg', {viewBox: cs === 'up' ? '-6 2 112 136' : '-6 4 112 180', 'class': 'dglyph', role: 'img', 'aria-label': ch});
+  svg.style.height = h + 'px';
+  inkPaths(svg, g, 50 - (g.x0 + g.x1) / 2);
+  return svg;
+}
+function pairSVG(L, h){   // "Aa" on one shared baseline
+  var gu = GLYPHS.up[L], gl = GLYPHS.lo[L.toLowerCase()];
+  var svg = S('svg', {viewBox: '-4 4 168 180', 'class': 'dglyph', role: 'img', 'aria-label': L + L.toLowerCase()});
+  svg.style.height = h + 'px';
+  inkPaths(svg, gu, 40 - (gu.x0 + gu.x1) / 2);
+  inkPaths(svg, gl, 118 - (gl.x0 + gl.x1) / 2);
+  return svg;
 }
 
 /* ================= SOUND (effects) + SPEECH ================= */
@@ -504,12 +530,34 @@ function renderMenu(){
   var prog = loadProg(), cs = state.menuTab, grid = H('div', 'tile-grid');
   LETTERS.forEach(function(L, i){
     var ch = cs === 'up' ? L : L.toLowerCase();
-    var t = H('button', 'tile', '<span class="ch">' + ch + '</span><span class="wd">' + WORDS[L] + '</span>' + (prog[cs + ch] ? '<span class="star">⭐</span>' : ''));
+    var t = H('button', 'tile', '<span class="ch"></span><span class="wd">' + WORDS[L] + '</span>' + (prog[cs + ch] ? '<span class="star">⭐</span>' : ''));
+    t.querySelector('.ch').appendChild(letterSVG(cs, L, cs === 'up' ? 46 : 58));
     t.addEventListener('click', function(){ state.screen = 'study'; state.cs = cs; state.idx = i; state.tab = 'watch'; render(); });
     grid.appendChild(t);
   });
   root.appendChild(grid);
+  var starCount = Object.keys(prog).filter(function(k){ return prog[k]; }).length;
+  if(starCount > 0){
+    var rr = H('div', 'reset-row'), rb = H('button', 'reset-btn', '↺ Reset stars (' + starCount + ')');
+    rb.addEventListener('click', confirmReset);
+    rr.appendChild(rb); root.appendChild(rr);
+  }
   return root;
+}
+
+// asks first, so a child cannot wipe the stars by accident (clears the ABC and abc stars together)
+function confirmReset(){
+  var old = document.querySelector('.cele-back'); if(old) old.remove();
+  var back = H('div', 'cele-back'), box = H('div', 'cele');
+  box.innerHTML = '<div class="big">🧹</div><h2>Start fresh?</h2><p>This takes away all the ⭐ stars so a new learner can begin again.</p>';
+  var row = H('div', 'control-row'), keep = H('button', 'ctrl-btn', 'Keep stars'), go = H('button', 'ctrl-btn primary', 'Reset stars');
+  keep.addEventListener('click', function(){ back.remove(); });
+  go.addEventListener('click', function(){
+    try{ localStorage.removeItem('lt_progress'); }catch(e){}
+    state.fills = {};
+    back.remove(); sfx.pop(); render();
+  });
+  row.appendChild(keep); row.appendChild(go); box.appendChild(row); back.appendChild(box); document.body.appendChild(back);
 }
 
 /* ---------- STUDY ---------- */
@@ -538,7 +586,9 @@ function renderStudy(){
   root.appendChild(bar);
 
   var head = H('div', 'study-header');
-  head.innerHTML = '<div class="pair-row"><div class="pair">' + L + L.toLowerCase() + '</div></div><div class="word-lbl">' + WORDS[L] + '</div><div class="speak-status" id="speak-status"></div>';
+  head.innerHTML = '<div class="pair-row"><div class="pair"></div></div><div class="word-lbl">' + WORDS[L] + '</div><div class="speak-status" id="speak-status"></div>';
+  head.querySelector('.pair').setAttribute('aria-label', L + L.toLowerCase());
+  head.querySelector('.pair').appendChild(pairSVG(L, 66));
   var sp = H('button', 'speak-btn', '🔊'); sp.title = 'Hear it';
   sp.addEventListener('click', function(){ speak(L + '. ' + L + ' is for ' + WORDS[L] + '.'); });
   head.querySelector('.pair-row').appendChild(sp);
